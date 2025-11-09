@@ -1,0 +1,30 @@
+# Energy-Optimized Test
+# Tests consolidation with light workload
+
+machine class:
+{
+        Number of machines: 16
+        CPU type: X86
+        Number of cores: 8
+        Memory: 16384
+        S-States: [120, 100, 100, 80, 40, 10, 0]
+        P-States: [12, 8, 6, 4]
+        C-States: [12, 3, 1, 0]
+        MIPS: [1000, 800, 600, 400]
+        GPUs: no
+}
+
+task class:
+{
+        Start time: 50000
+        End time: 600000
+        Inter arrival: 15000
+        Expected runtime: 1500000
+        Memory: 512
+        VM type: LINUX
+        GPU enabled: no
+        SLA type: SLA1
+        CPU type: X86
+        Task type: WEB
+        Seed: 11111
+}

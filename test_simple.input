@@ -1,0 +1,30 @@
+# Very Simple Test - Minimal Configuration
+# Just 4 machines and a few tasks
+
+machine class:
+{
+    Number of machines: 4
+    CPU type: X86
+    Number of cores: 8
+    Memory: 16384
+    S-States: [120, 100, 100, 80, 40, 10, 0]
+    P-States: [12, 8, 6, 4]
+    C-States: [12, 3, 1, 0]
+    MIPS: [1000, 800, 600, 400]
+    GPUs: no
+}
+
+task class:
+{
+    Start time: 10000
+    End time: 200000
+    Inter arrival: 20000
+    Expected runtime: 1000000
+    Memory: 512
+    VM type: LINUX
+    GPU enabled: no
+    SLA type: SLA1
+    CPU type: X86
+    Task type: WEB
+    Seed: 12345
+}

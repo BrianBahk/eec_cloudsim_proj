@@ -1,0 +1,60 @@
+# Basic Test Input for Energy-Aware Scheduler
+# Tests: Simple workload with X86 machines and web requests
+
+machine class:
+{
+    Number of machines: 8
+    CPU type: X86
+    Number of cores: 8
+    Memory: 16384
+    S-States: [120, 100, 100, 80, 40, 10, 0]
+    P-States: [12, 8, 6, 4]
+    C-States: [12, 3, 1, 0]
+    MIPS: [1000, 800, 600, 400]
+    GPUs: no
+}
+
+machine class:
+{
+    Number of machines: 4
+    CPU type: X86
+    Number of cores: 16
+    Memory: 32768
+    S-States: [150, 120, 120, 100, 60, 20, 0]
+    P-States: [15, 10, 7, 5]
+    C-States: [15, 4, 2, 0]
+    MIPS: [1200, 900, 700, 500]
+    GPUs: yes
+}
+
+# Light workload - tests consolidation
+task class:
+{
+    Start time: 10000
+    End time: 500000
+    Inter arrival: 8000
+    Expected runtime: 1500000
+    Memory: 512
+    VM type: LINUX
+    GPU enabled: no
+    SLA type: SLA1
+    CPU type: X86
+    Task type: WEB
+    Seed: 12345
+}
+
+# Medium priority tasks
+task class:
+{
+    Start time: 100000
+    End time: 600000
+    Inter arrival: 12000
+    Expected runtime: 2000000
+    Memory: 1024
+    VM type: LINUX
+    GPU enabled: no
+    SLA type: SLA2
+    CPU type: X86
+    Task type: WEB
+    Seed: 67890
+}

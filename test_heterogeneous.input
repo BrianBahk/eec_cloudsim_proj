@@ -1,0 +1,78 @@
+# Heterogeneous Workload Test
+# Tests: Multiple CPU types, GPU tasks, mixed SLAs
+
+# X86 machines with GPUs
+machine class:
+{
+    Number of machines: 6
+    CPU type: X86
+    Number of cores: 8
+    Memory: 16384
+    S-States: [120, 100, 100, 80, 40, 10, 0]
+    P-States: [12, 8, 6, 4]
+    C-States: [12, 3, 1, 0]
+    MIPS: [1000, 800, 600, 400]
+    GPUs: yes
+}
+
+# ARM machines without GPUs
+machine class:
+{
+    Number of machines: 8
+    CPU type: ARM
+    Number of cores: 16
+    Memory: 16384
+    S-States: [100, 80, 80, 60, 30, 8, 0]
+    P-States: [10, 7, 5, 3]
+    C-States: [10, 2, 1, 0]
+    MIPS: [1200, 900, 700, 500]
+    GPUs: no
+}
+
+# High priority X86 tasks
+task class:
+{
+    Start time: 5000
+    End time: 400000
+    Inter arrival: 5000
+    Expected runtime: 1000000
+    Memory: 256
+    VM type: LINUX
+    GPU enabled: no
+    SLA type: SLA0
+    CPU type: X86
+    Task type: WEB
+    Seed: 11111
+}
+
+# GPU-enabled AI tasks
+task class:
+{
+    Start time: 50000
+    End time: 450000
+    Inter arrival: 20000
+    Expected runtime: 3000000
+    Memory: 2048
+    VM type: LINUX
+    GPU enabled: yes
+    SLA type: SLA1
+    CPU type: X86
+    Task type: AI
+    Seed: 22222
+}
+
+# ARM tasks
+task class:
+{
+    Start time: 30000
+    End time: 500000
+    Inter arrival: 10000
+    Expected runtime: 1500000
+    Memory: 512
+    VM type: LINUX
+    GPU enabled: no
+    SLA type: SLA2
+    CPU type: ARM
+    Task type: SCIENTIFIC
+    Seed: 33333
+}
