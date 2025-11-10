@@ -1,0 +1,16 @@
+# Documentation files (personal notes)
+ALGORITHMS.md
+
+# Old/backup files
+old.cpp
+
+# Build artifacts
+*.o
+simulator
+
+# Temporary files
+.nfs*
+*~
+*.swp
+.DS_Store
+
