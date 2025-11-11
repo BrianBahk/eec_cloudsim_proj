@@ -36,11 +36,16 @@ private:
     // Helper functions
     VMId_t findOrCreateVM(VMType_t vm_type, CPUType_t cpu_type, bool needs_gpu);
     MachineId_t findSuitableMachine(CPUType_t cpu_type, bool needs_gpu, unsigned memory_needed);
+    MachineId_t findPowerEfficientMachine(CPUType_t cpu_type, bool needs_gpu, unsigned memory_needed);
+    double calculatePowerEfficiency(MachineInfo_t& info);
+    double calculateIncrementalPowerCost(MachineInfo_t& info, unsigned memory_needed);
     Priority_t getPriorityForSLA(SLAType_t sla);
     bool canPlaceTaskOnVM(VMId_t vm_id, TaskId_t task_id);
     void consolidateMachines();
+    void powerAwareConsolidation();
 public:
     void handleSLAViolation(TaskId_t task_id);
+    void handleMemoryOverflow(MachineId_t machine_id);
 };
 
 
