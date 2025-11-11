@@ -14,40 +14,67 @@
 
 #include "Interfaces.h"
 
+struct MachineTracker {
+    MachineId_t machine_id;
+    CPUType_t cpu_type;
+    unsigned memory_total;
+    unsigned memory_used;
+    unsigned num_cores;
+    bool has_gpu;
+    MachineState_t state;
+    unsigned active_vms;
+    unsigned active_tasks;
+    unsigned idle_ticks;
+    Time_t last_activity;
+    vector<VMId_t> attached_vms;
+};
+
+struct VMTracker {
+    VMId_t vm_id;
+    VMType_t vm_type;
+    CPUType_t cpu_type;
+    MachineId_t machine_id;
+    unsigned task_count;
+    bool is_migrating;
+    vector<TaskId_t> tasks;
+};
+
 class Scheduler {
 public:
-    Scheduler()                 {}
+    Scheduler() {}
     void Init();
     void MigrationComplete(Time_t time, VMId_t vm_id);
     void NewTask(Time_t now, TaskId_t task_id);
     void PeriodicCheck(Time_t now);
     void Shutdown(Time_t now);
     void TaskComplete(Time_t now, TaskId_t task_id);
+    void StateChanged(Time_t time, MachineId_t machine_id);
+    
 private:
-    // Data structures
-    vector<VMId_t> vms;
-    vector<MachineId_t> machines;
-    map<VMId_t, MachineId_t> vm_to_machine;  // VM -> Machine mapping
-    map<VMId_t, VMType_t> vm_types;          // VM -> VM type mapping
-    map<VMId_t, CPUType_t> vm_cpu_types;     // VM -> CPU type mapping
-    set<VMId_t> migrating_vms;               // VMs currently migrating
-    map<MachineId_t, set<VMId_t>> machine_vms; // Machine -> set of VMs
+    // Machine management
+    map<MachineId_t, MachineTracker> machines;
+    vector<MachineId_t> machines_by_type[4]; // Indexed by CPUType_t
+    
+    // VM management
+    map<VMId_t, VMTracker> vms;
+    map<CPUType_t, map<VMType_t, vector<VMId_t>>> vm_pools;
+    
+    // Tracking
+    unsigned total_machines;
+    Time_t last_periodic_check;
+    map<TaskId_t, VMId_t> task_to_vm;
+    set<MachineId_t> waking_machines;
+    vector<TaskId_t> pending_tasks;
     
     // Helper functions
-    VMId_t findOrCreateVM(VMType_t vm_type, CPUType_t cpu_type, bool needs_gpu);
-    MachineId_t findSuitableMachine(CPUType_t cpu_type, bool needs_gpu, unsigned memory_needed);
-    MachineId_t findPowerEfficientMachine(CPUType_t cpu_type, bool needs_gpu, unsigned memory_needed);
-    double calculatePowerEfficiency(MachineInfo_t& info);
-    double calculateIncrementalPowerCost(MachineInfo_t& info, unsigned memory_needed);
-    Priority_t getPriorityForSLA(SLAType_t sla);
-    bool canPlaceTaskOnVM(VMId_t vm_id, TaskId_t task_id);
-    void consolidateMachines();
-    void powerAwareConsolidation();
-public:
-    void handleSLAViolation(TaskId_t task_id);
-    void handleMemoryOverflow(MachineId_t machine_id);
+    void DiscoverMachines();
+    VMId_t FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, unsigned memory_needed, bool gpu_capable);
+    MachineId_t FindBestMachine(CPUType_t cpu_type, unsigned memory_needed, bool gpu_capable, bool allow_wake);
+    void PowerDownIdleMachines(Time_t now);
+    void UpdateMachineState(MachineId_t machine_id);
+    Priority_t DeterminePriority(TaskId_t task_id);
+    void LogState(const string& context, Time_t now);
+    void ProcessPendingTasks(Time_t now);
 };
-
-
 
 #endif /* Scheduler_hpp */
