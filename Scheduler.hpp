@@ -1,8 +1,8 @@
 //
 //  Scheduler.hpp
-//  CloudSim
+//  CloudSim - DVFS-Aware Scheduling
 //
-//  Created by ELMOOTAZBELLAH ELNOZAHY on 10/20/24.
+//  Uses Dynamic Voltage and Frequency Scaling (P-states) for energy efficiency
 //
 
 #ifndef Scheduler_hpp
@@ -11,7 +11,6 @@
 #include <vector>
 #include <map>
 #include <set>
-
 #include "Interfaces.h"
 
 struct MachineTracker {
@@ -21,11 +20,12 @@ struct MachineTracker {
     unsigned memory_used;
     unsigned num_cores;
     bool has_gpu;
-    MachineState_t state;
+    MachineState_t s_state;
+    CPUPerformance_t p_state;
     unsigned active_vms;
     unsigned active_tasks;
     unsigned idle_ticks;
-    Time_t last_activity;
+    SLAType_t highest_sla_on_machine; // Track most urgent SLA
     vector<VMId_t> attached_vms;
 };
 
@@ -35,7 +35,6 @@ struct VMTracker {
     CPUType_t cpu_type;
     MachineId_t machine_id;
     unsigned task_count;
-    bool is_migrating;
     vector<TaskId_t> tasks;
 };
 
@@ -51,30 +50,32 @@ public:
     void StateChanged(Time_t time, MachineId_t machine_id);
     
 private:
-    // Machine management
+    // Machine and VM tracking
     map<MachineId_t, MachineTracker> machines;
     vector<MachineId_t> machines_by_type[4]; // Indexed by CPUType_t
-    
-    // VM management
     map<VMId_t, VMTracker> vms;
     map<CPUType_t, map<VMType_t, vector<VMId_t>>> vm_pools;
     
-    // Tracking
+    // Task tracking
+    map<TaskId_t, VMId_t> task_to_vm;
+    map<TaskId_t, SLAType_t> task_sla_map;
+    vector<TaskId_t> pending_tasks;
+    set<MachineId_t> waking_machines;
+    
+    // Timing
     unsigned total_machines;
     Time_t last_periodic_check;
-    map<TaskId_t, VMId_t> task_to_vm;
-    set<MachineId_t> waking_machines;
-    vector<TaskId_t> pending_tasks;
     
     // Helper functions
     void DiscoverMachines();
     VMId_t FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, unsigned memory_needed, bool gpu_capable);
-    MachineId_t FindBestMachine(CPUType_t cpu_type, unsigned memory_needed, bool gpu_capable, bool allow_wake);
+    MachineId_t FindBestMachine(CPUType_t cpu_type, unsigned memory_needed, bool gpu_capable);
+    void UpdateMachinePState(MachineId_t machine_id);
     void PowerDownIdleMachines(Time_t now);
+    void ProcessPendingTasks(Time_t now);
     void UpdateMachineState(MachineId_t machine_id);
     Priority_t DeterminePriority(TaskId_t task_id);
-    void LogState(const string& context, Time_t now);
-    void ProcessPendingTasks(Time_t now);
+    CPUPerformance_t SLAToPState(SLAType_t sla);
 };
 
 #endif /* Scheduler_hpp */

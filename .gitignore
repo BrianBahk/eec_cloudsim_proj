@@ -14,3 +14,4 @@ simulator
 *.swp
 .DS_Store
 
+tests
