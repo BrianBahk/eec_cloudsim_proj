@@ -37,6 +37,8 @@ struct VMTracker {
     unsigned task_count;
     bool is_migrating;
     vector<TaskId_t> tasks;
+    bool dedicated_to_long_tasks;  // True if this VM is reserved for long tasks
+    Time_t total_task_time;        // Track accumulated task time
 };
 
 class Scheduler {
@@ -68,7 +70,7 @@ private:
     
     // Helper functions
     void DiscoverMachines();
-    VMId_t FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, unsigned memory_needed, bool gpu_capable);
+    VMId_t FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, unsigned memory_needed, bool gpu_capable, Time_t expected_runtime, SLAType_t sla_type);
     MachineId_t FindBestMachine(CPUType_t cpu_type, unsigned memory_needed, bool gpu_capable, bool allow_wake);
     void PowerDownIdleMachines(Time_t now);
     void UpdateMachineState(MachineId_t machine_id);

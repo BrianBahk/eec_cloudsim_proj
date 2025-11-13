@@ -7,6 +7,7 @@
 
 #include "Scheduler.hpp"
 #include <algorithm>
+#include <climits>
 
 // Simple constants - optimized for reliability
 #define IDLE_THRESHOLD 50
@@ -21,27 +22,55 @@ void Scheduler::Init() {
     // Discover all machines
     DiscoverMachines();
     
-    // Strategy: Keep half of machines active for reliability
+    // Strategy: Keep ALL machines active and pre-create many VMs
+    // Use total pending work time for intelligent load balancing
     for (int cpu = ARM; cpu <= X86; cpu++) {
-        if (machines_by_type[cpu].empty()) continue;
-        
-        unsigned total = machines_by_type[cpu].size();
-        unsigned num_to_keep = (total + 1) / 2; // Keep about half
-        if (num_to_keep < 3) num_to_keep = min(3u, total);
-        
-        for (unsigned i = 0; i < num_to_keep && i < total; i++) {
-            MachineId_t mid = machines_by_type[cpu][i];
+        CPUType_t cpu_type = (CPUType_t)cpu;
+        for (MachineId_t mid : machines_by_type[cpu]) {
+            MachineInfo_t info = Machine_GetInfo(mid);
+            if (info.s_state != S0) {
+                Machine_SetState(mid, S0);
+            }
             machines[mid].state = S0;
-        }
-        
-        for (unsigned i = num_to_keep; i < total; i++) {
-            MachineId_t mid = machines_by_type[cpu][i];
-            Machine_SetState(mid, S5);
-            machines[mid].state = S5;
+            
+            // Pre-create VMs based on CPU type
+            // LINUX/LINUX_RT work on all CPUs, WIN on X86, AIX on POWER
+            vector<VMType_t> vm_types;
+            vm_types.push_back(LINUX);
+            vm_types.push_back(LINUX_RT);
+            if (cpu_type == X86) vm_types.push_back(WIN);
+            if (cpu_type == POWER) vm_types.push_back(AIX);
+            
+            // Create optimal number of VMs - balance between parallelism and overhead
+            for (int i = 0; i < 8; i++) {  // 8 VMs per type - sweet spot found through testing
+                for (VMType_t vm_type : vm_types) {
+                    if (machines[mid].memory_used + VM_MEMORY_OVERHEAD >= machines[mid].memory_total) break;
+                    
+                    VMId_t vm_id = VM_Create(vm_type, cpu_type);
+                    VM_Attach(vm_id, mid);
+                    
+                    VMTracker vm_tracker;
+                    vm_tracker.vm_id = vm_id;
+                    vm_tracker.vm_type = vm_type;
+                    vm_tracker.cpu_type = cpu_type;
+                    vm_tracker.machine_id = mid;
+                    vm_tracker.task_count = 0;
+                    vm_tracker.is_migrating = false;
+                    vm_tracker.total_task_time = 0;
+                    vm_tracker.dedicated_to_long_tasks = false;
+                    
+                    vms[vm_id] = vm_tracker;
+                    vm_pools[cpu_type][vm_type].push_back(vm_id);
+                    
+                    machines[mid].active_vms++;
+                    machines[mid].attached_vms.push_back(vm_id);
+                    machines[mid].memory_used += VM_MEMORY_OVERHEAD;
+                }
+            }
         }
     }
     
-    SimOutput("Scheduler::Init(): Complete", 1);
+    SimOutput("Scheduler::Init(): Complete - work-time based load balancing", 1);
 }
 
 void Scheduler::DiscoverMachines() {
@@ -74,8 +103,13 @@ Priority_t Scheduler::DeterminePriority(TaskId_t task_id) {
 }
 
 VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, 
-                                 unsigned memory_needed, bool gpu_capable) {
+                                 unsigned memory_needed, bool gpu_capable,
+                                 Time_t expected_runtime, SLAType_t sla_type) {
     // Try to reuse existing VM on active machine with space
+    // Prioritize SLA0 tasks by giving them VMs with least work
+    VMId_t best_vm = static_cast<VMId_t>(-1);
+    double best_score = 1e18;
+    
     if (vm_pools.count(cpu_type) && vm_pools[cpu_type].count(vm_type)) {
         for (VMId_t vm_id : vm_pools[cpu_type][vm_type]) {
             VMTracker& vm = vms[vm_id];
@@ -85,8 +119,31 @@ VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type,
             if (machine.memory_total - machine.memory_used < memory_needed) continue;
             if (gpu_capable && !machine.has_gpu) continue;
             
-            return vm_id;
+            // Score based on accumulated work time
+            double score = vm.total_task_time;
+            
+            // Prioritize SLA0 (critical) tasks for least loaded VMs
+            // Higher SLA gets higher penalty, steering them to busier VMs
+            if (sla_type == SLA0) {
+                // SLA0 gets cleanest VMs - no penalty
+                score = score;
+            } else if (sla_type == SLA1) {
+                // SLA1 tasks get penalty, making busy VMs more attractive
+                score = score - 2000000.0; // 2 second penalty makes busier VMs preferred
+            } else {
+                // SLA2 tasks get bigger penalty, strongly preferring busy VMs
+                score = score - 4000000.0; // 4 second penalty
+            }
+            
+            if (score < best_score) {
+                best_score = score;
+                best_vm = vm_id;
+            }
         }
+    }
+    
+    if (best_vm != static_cast<VMId_t>(-1)) {
+        return best_vm;
     }
     
     // Find active machine with space
@@ -160,28 +217,11 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
     Priority_t priority = DeterminePriority(task_id);
     
     VMId_t vm_id = FindOrCreateVM(info.required_cpu, info.required_vm, 
-                                   info.required_memory, info.gpu_capable);
+                                   info.required_memory, info.gpu_capable,
+                                   info.target_completion, info.required_sla);
     
     if (vm_id == static_cast<VMId_t>(-1)) {
         pending_tasks.push_back(task_id);
-        
-        // Aggressively wake machines when tasks are pending
-        unsigned pending_count = pending_tasks.size();
-        if (pending_count >= 2) {
-            // Wake multiple machines based on pending count
-            unsigned to_wake = 1 + (pending_count / 10);
-            if (to_wake > 5) to_wake = 5;
-            
-            unsigned woken = 0;
-            for (MachineId_t mid : machines_by_type[info.required_cpu]) {
-                if (woken >= to_wake) break;
-                if (machines[mid].state != S0 && waking_machines.count(mid) == 0) {
-                    Machine_SetState(mid, S0);
-                    waking_machines.insert(mid);
-                    woken++;
-                }
-            }
-        }
         return;
     }
     
@@ -189,6 +229,7 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
     
     vms[vm_id].task_count++;
     vms[vm_id].tasks.push_back(task_id);
+    vms[vm_id].total_task_time += info.target_completion;
     task_to_vm[task_id] = vm_id;
     
     MachineId_t mid = vms[vm_id].machine_id;
@@ -212,10 +253,15 @@ void Scheduler::TaskComplete(Time_t now, TaskId_t task_id) {
     auto it = find(vm.tasks.begin(), vm.tasks.end(), task_id);
     if (it != vm.tasks.end()) vm.tasks.erase(it);
     
+    TaskInfo_t info = GetTaskInfo(task_id);
+    if (vm.total_task_time >= info.target_completion) {
+        vm.total_task_time -= info.target_completion;
+    }
+    
     MachineId_t mid = vm.machine_id;
     if (machines[mid].active_tasks > 0) machines[mid].active_tasks--;
     
-    unsigned memory = GetTaskInfo(task_id).required_memory;
+    unsigned memory = info.required_memory;
     if (machines[mid].memory_used >= memory) {
         machines[mid].memory_used -= memory;
     }
@@ -223,6 +269,13 @@ void Scheduler::TaskComplete(Time_t now, TaskId_t task_id) {
 
 void Scheduler::ProcessPendingTasks(Time_t now) {
     if (pending_tasks.empty()) return;
+    
+    // Sort pending tasks by SLA priority: SLA0 first, then SLA1, then SLA2
+    sort(pending_tasks.begin(), pending_tasks.end(), [this](TaskId_t a, TaskId_t b) {
+        SLAType_t sla_a = GetTaskInfo(a).required_sla;
+        SLAType_t sla_b = GetTaskInfo(b).required_sla;
+        return sla_a < sla_b; // SLA0=0, SLA1=1, SLA2=2, so lower is higher priority
+    });
     
     vector<TaskId_t> still_pending;
     
@@ -233,7 +286,8 @@ void Scheduler::ProcessPendingTasks(Time_t now) {
         Priority_t priority = DeterminePriority(task_id);
         
         VMId_t vm_id = FindOrCreateVM(info.required_cpu, info.required_vm,
-                                       info.required_memory, info.gpu_capable);
+                                       info.required_memory, info.gpu_capable,
+                                       info.target_completion, info.required_sla);
         
         if (vm_id == static_cast<VMId_t>(-1)) {
             still_pending.push_back(task_id);
@@ -244,6 +298,7 @@ void Scheduler::ProcessPendingTasks(Time_t now) {
         
         vms[vm_id].task_count++;
         vms[vm_id].tasks.push_back(task_id);
+        vms[vm_id].total_task_time += info.target_completion;
         task_to_vm[task_id] = vm_id;
         
         MachineId_t mid = vms[vm_id].machine_id;
