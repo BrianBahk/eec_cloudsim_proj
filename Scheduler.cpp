@@ -131,9 +131,15 @@ MachineId_t Scheduler::findSuitableMachine(CPUType_t cpu_type, bool needs_gpu, u
             // Check memory
             if(info.memory_used + memory_needed > info.memory_size * 0.9) continue;
             
-            // Wake up machine if needed
+            // Wake up machine if needed and verify it's ready
             if(info.s_state != S0 && info.s_state != S0i1) {
                 Machine_SetState(machine_id, S0);
+                // Verify the machine is now in S0 state before using it
+                info = Machine_GetInfo(machine_id);
+                if(info.s_state != S0 && info.s_state != S0i1) {
+                    // Machine not ready yet, skip it
+                    continue;
+                }
             }
             
             best_machine = machine_id;
@@ -183,6 +189,18 @@ VMId_t Scheduler::findOrCreateVM(VMType_t vm_type, CPUType_t cpu_type, bool need
     vms.push_back(new_vm);
     vm_types[new_vm] = vm_type;
     vm_cpu_types[new_vm] = cpu_type;
+    
+    // Verify machine is in proper state before attaching
+    MachineInfo_t machine_info = Machine_GetInfo(machine_id);
+    if(machine_info.s_state != S0 && machine_info.s_state != S0i1) {
+        // Machine is not ready, try to wake it up
+        Machine_SetState(machine_id, S0);
+        machine_info = Machine_GetInfo(machine_id);
+        if(machine_info.s_state != S0 && machine_info.s_state != S0i1) {
+            SimOutput("Scheduler::findOrCreateVM(): ERROR - Machine not ready for VM attachment!", 0);
+            throw runtime_error("Machine not in ready state for VM attachment");
+        }
+    }
     
     // Attach to machine
     VM_Attach(new_vm, machine_id);
@@ -244,10 +262,16 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
                 vm_types[new_vm] = required_vm;
                 vm_cpu_types[new_vm] = required_cpu;
                 
-                // Make sure machine is on
+                // Make sure machine is on and ready before attaching VM
                 MachineInfo_t machine_info = Machine_GetInfo(machine_id);
                 if(machine_info.s_state != S0 && machine_info.s_state != S0i1) {
                     Machine_SetState(machine_id, S0);
+                    // Verify machine is ready
+                    machine_info = Machine_GetInfo(machine_id);
+                    if(machine_info.s_state != S0 && machine_info.s_state != S0i1) {
+                        // Machine not ready, don't attach VM
+                        continue;
+                    }
                 }
                 
                 VM_Attach(new_vm, machine_id);
