@@ -24,7 +24,6 @@ public:
     void Shutdown(Time_t now);
     void TaskComplete(Time_t now, TaskId_t task_id);
 private:
-    // Data structures
     vector<VMId_t> vms;
     vector<MachineId_t> machines;
     map<VMId_t, MachineId_t> vm_to_machine;  // VM -> Machine mapping
@@ -33,7 +32,6 @@ private:
     set<VMId_t> migrating_vms;               // VMs currently migrating
     map<MachineId_t, set<VMId_t>> machine_vms; // Machine -> set of VMs
     
-    // Helper functions
     VMId_t findOrCreateVM(VMType_t vm_type, CPUType_t cpu_type, bool needs_gpu);
     MachineId_t findSuitableMachine(CPUType_t cpu_type, bool needs_gpu, unsigned memory_needed);
     Priority_t getPriorityForSLA(SLAType_t sla);
@@ -45,4 +43,4 @@ public:
 
 
 
-#endif /* Scheduler_hpp */
+#endif
