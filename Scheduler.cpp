@@ -1,20 +1,8 @@
-//
-//  Scheduler.cpp
-//  CloudSim - DVFS-Aware Scheduling
-//
-//  Key Idea: Use P-states (CPU frequency scaling) to match performance to workload urgency
-//  - SLA0 (95% compliance) → P0 (100% speed, max power)
-//  - SLA1 (90% compliance) → P1 (75% speed, reduced power)
-//  - SLA2 (80% compliance) → P2 (50% speed, low power)
-//  - SLA3 (best effort)     → P3 (25% speed, minimal power)
-//
-
 #include "Scheduler.hpp"
 #include <algorithm>
 
-// Constants
 #define IDLE_THRESHOLD 50
-#define PERIODIC_CHECK_INTERVAL 1000000 // 1 second
+#define PERIODIC_CHECK_INTERVAL 1000000
 
 void Scheduler::Init() {
     SimOutput("Scheduler::Init(): DVFS-Aware scheduler initialization", 1);
@@ -22,10 +10,8 @@ void Scheduler::Init() {
     total_machines = Machine_GetTotal();
     last_periodic_check = 0;
     
-    // Discover all machines
     DiscoverMachines();
     
-    // Keep half of machines active, rest in S5
     for (int cpu = ARM; cpu <= X86; cpu++) {
         if (machines_by_type[cpu].empty()) continue;
         
@@ -33,16 +19,14 @@ void Scheduler::Init() {
         unsigned num_to_keep = (total + 1) / 2;
         if (num_to_keep < 3) num_to_keep = min(3u, total);
         
-        // Start active machines at P3 (lowest power) - will scale up as needed
         for (unsigned i = 0; i < num_to_keep && i < total; i++) {
             MachineId_t mid = machines_by_type[cpu][i];
             machines[mid].s_state = S0;
-            machines[mid].p_state = P3; // Start at lowest frequency
+            machines[mid].p_state = P3;
             machines[mid].highest_sla_on_machine = SLA3;
-            Machine_SetCorePerformance(mid, 0, P3); // Set all cores to P3
+            Machine_SetCorePerformance(mid, 0, P3);
         }
         
-        // Power down the rest
         for (unsigned i = num_to_keep; i < total; i++) {
             MachineId_t mid = machines_by_type[cpu][i];
             Machine_SetState(mid, S5);
@@ -77,12 +61,11 @@ void Scheduler::DiscoverMachines() {
 }
 
 CPUPerformance_t Scheduler::SLAToPState(SLAType_t sla) {
-    // Map SLA urgency to P-state
     switch(sla) {
-        case SLA0: return P0; // Most urgent → Max frequency
-        case SLA1: return P1; // Medium urgent → 3/4 frequency
-        case SLA2: return P2; // Less urgent → 1/2 frequency
-        case SLA3: return P3; // Best effort → 1/4 frequency
+        case SLA0: return P0;
+        case SLA1: return P1;
+        case SLA2: return P2;
+        case SLA3: return P3;
         default: return P2;
     }
 }
@@ -97,9 +80,8 @@ Priority_t Scheduler::DeterminePriority(TaskId_t task_id) {
 void Scheduler::UpdateMachinePState(MachineId_t machine_id) {
     MachineTracker& machine = machines[machine_id];
     
-    if (machine.s_state != S0) return; // Only adjust P-state for active machines
+    if (machine.s_state != S0) return;
     
-    // Quick optimization: if machine has no tasks, set to P3
     if (machine.active_tasks == 0) {
         if (machine.p_state != P3) {
             Machine_SetCorePerformance(machine_id, 0, P3);
@@ -109,8 +91,7 @@ void Scheduler::UpdateMachinePState(MachineId_t machine_id) {
         return;
     }
     
-    // Find the most urgent SLA among all tasks on this machine
-    SLAType_t highest_sla = SLA3; // Start with lowest urgency
+    SLAType_t highest_sla = SLA3;
     
     for (VMId_t vm_id : machine.attached_vms) {
         if (vms.count(vm_id) == 0) continue;
@@ -118,19 +99,17 @@ void Scheduler::UpdateMachinePState(MachineId_t machine_id) {
         for (TaskId_t task_id : vms[vm_id].tasks) {
             if (task_sla_map.count(task_id) > 0) {
                 SLAType_t task_sla = task_sla_map[task_id];
-                if (task_sla < highest_sla) { // Lower enum value = higher urgency
+                if (task_sla < highest_sla) {
                     highest_sla = task_sla;
-                    if (highest_sla == SLA0) break; // Can't get more urgent
+                    if (highest_sla == SLA0) break;
                 }
             }
         }
-        if (highest_sla == SLA0) break; // Early exit
+        if (highest_sla == SLA0) break;
     }
     
-    // Determine target P-state based on most urgent SLA
     CPUPerformance_t target_pstate = SLAToPState(highest_sla);
     
-    // If P-state needs to change, apply it
     if (machine.p_state != target_pstate) {
         Machine_SetCorePerformance(machine_id, 0, target_pstate);
         machine.p_state = target_pstate;
@@ -139,7 +118,6 @@ void Scheduler::UpdateMachinePState(MachineId_t machine_id) {
 }
 
 MachineId_t Scheduler::FindBestMachine(CPUType_t cpu_type, unsigned memory_needed, bool gpu_capable) {
-    // Find active machine with space, prefer machines already running similar workloads
     MachineId_t best_machine = static_cast<MachineId_t>(-1);
     double best_score = -1;
     
@@ -150,11 +128,10 @@ MachineId_t Scheduler::FindBestMachine(CPUType_t cpu_type, unsigned memory_neede
         if (m.memory_total - m.memory_used < memory_needed + VM_MEMORY_OVERHEAD) continue;
         if (gpu_capable && !m.has_gpu) continue;
         
-        // Prefer consolidation on fuller machines
         double utilization = (double)m.memory_used / m.memory_total;
         double score = utilization;
         
-        if (m.active_vms > 0) score += 0.3; // Bonus for existing VMs
+        if (m.active_vms > 0) score += 0.3;
         if (gpu_capable && m.has_gpu) score += 0.2;
         
         if (score > best_score) {
@@ -163,7 +140,6 @@ MachineId_t Scheduler::FindBestMachine(CPUType_t cpu_type, unsigned memory_neede
         }
     }
     
-    // If no active machine, wake one
     if (best_machine == static_cast<MachineId_t>(-1)) {
         for (MachineId_t mid : machines_by_type[cpu_type]) {
             MachineTracker& m = machines[mid];
@@ -185,7 +161,7 @@ MachineId_t Scheduler::FindBestMachine(CPUType_t cpu_type, unsigned memory_neede
     }
     
     if (waking_machines.count(best_machine) > 0) {
-        return static_cast<MachineId_t>(-1); // Machine waking, queue task
+        return static_cast<MachineId_t>(-1);
     }
     
     return best_machine;
@@ -193,7 +169,6 @@ MachineId_t Scheduler::FindBestMachine(CPUType_t cpu_type, unsigned memory_neede
 
 VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, 
                                  unsigned memory_needed, bool gpu_capable) {
-    // Try to reuse existing VM
     if (vm_pools.count(cpu_type) && vm_pools[cpu_type].count(vm_type)) {
         for (VMId_t vm_id : vm_pools[cpu_type][vm_type]) {
             VMTracker& vm = vms[vm_id];
@@ -207,14 +182,12 @@ VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type,
         }
     }
     
-    // Find machine and create new VM
     MachineId_t machine_id = FindBestMachine(cpu_type, memory_needed, gpu_capable);
     
     if (machine_id == static_cast<MachineId_t>(-1)) {
         return static_cast<VMId_t>(-1);
     }
     
-    // Create VM
     VMId_t vm_id = VM_Create(vm_type, cpu_type);
     VM_Attach(vm_id, machine_id);
     
@@ -240,7 +213,6 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
     SLAType_t sla = info.required_sla;
     Priority_t priority = DeterminePriority(task_id);
     
-    // Track task SLA for P-state management
     task_sla_map[task_id] = sla;
     
     VMId_t vm_id = FindOrCreateVM(info.required_cpu, info.required_vm, 
@@ -249,7 +221,6 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
     if (vm_id == static_cast<VMId_t>(-1)) {
         pending_tasks.push_back(task_id);
         
-        // Wake additional machines for pending tasks
         if (pending_tasks.size() >= 2) {
             unsigned to_wake = 1 + (pending_tasks.size() / 10);
             if (to_wake > 3) to_wake = 3;
@@ -278,7 +249,6 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
     machines[mid].memory_used += info.required_memory;
     machines[mid].idle_ticks = 0;
     
-    // **KEY DVFS FEATURE**: Update machine P-state based on new task's SLA
     UpdateMachinePState(mid);
 }
 
@@ -305,7 +275,6 @@ void Scheduler::TaskComplete(Time_t now, TaskId_t task_id) {
         machines[mid].memory_used -= memory;
     }
     
-    // **KEY DVFS FEATURE**: Re-evaluate P-state after task completes
     UpdateMachinePState(mid);
 }
 
@@ -351,7 +320,6 @@ void Scheduler::PeriodicCheck(Time_t now) {
     
     last_periodic_check = now;
     
-    // Wake machines if many pending
     if (pending_tasks.size() > 10) {
         for (int cpu = ARM; cpu <= X86; cpu++) {
             unsigned to_wake = 1;
@@ -418,7 +386,6 @@ void Scheduler::StateChanged(Time_t time, MachineId_t machine_id) {
     waking_machines.erase(machine_id);
     
     if (machines[machine_id].s_state == S0) {
-        // Machine just woke up - set to P3 initially, will scale up as needed
         machines[machine_id].p_state = P3;
         Machine_SetCorePerformance(machine_id, 0, P3);
         
@@ -429,7 +396,6 @@ void Scheduler::StateChanged(Time_t time, MachineId_t machine_id) {
 }
 
 void Scheduler::MigrationComplete(Time_t time, VMId_t vm_id) {
-    // Not used in this implementation
 }
 
 void Scheduler::Shutdown(Time_t time) {
@@ -440,8 +406,6 @@ void Scheduler::Shutdown(Time_t time) {
         }
     }
 }
-
-// Public interface
 
 static Scheduler TheScheduler;
 
@@ -483,7 +447,6 @@ void SimulationComplete(Time_t time) {
 }
 
 void SLAWarning(Time_t time, TaskId_t task_id) {
-    // Boost priority for at-risk tasks
     SetTaskPriority(task_id, HIGH_PRIORITY);
 }
 
