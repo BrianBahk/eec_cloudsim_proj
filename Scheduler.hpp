@@ -37,8 +37,8 @@ struct VMTracker {
     unsigned task_count;
     bool is_migrating;
     vector<TaskId_t> tasks;
-    bool dedicated_to_long_tasks;  // True if this VM is reserved for long tasks
-    Time_t total_task_time;        // Track accumulated task time
+    bool dedicated_to_long_tasks;
+    Time_t total_task_time;
 };
 
 class Scheduler {
@@ -53,22 +53,18 @@ public:
     void StateChanged(Time_t time, MachineId_t machine_id);
     
 private:
-    // Machine management
     map<MachineId_t, MachineTracker> machines;
-    vector<MachineId_t> machines_by_type[4]; // Indexed by CPUType_t
+    vector<MachineId_t> machines_by_type[4];
     
-    // VM management
     map<VMId_t, VMTracker> vms;
     map<CPUType_t, map<VMType_t, vector<VMId_t>>> vm_pools;
     
-    // Tracking
     unsigned total_machines;
     Time_t last_periodic_check;
     map<TaskId_t, VMId_t> task_to_vm;
     set<MachineId_t> waking_machines;
     vector<TaskId_t> pending_tasks;
     
-    // Helper functions
     void DiscoverMachines();
     VMId_t FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, unsigned memory_needed, bool gpu_capable, Time_t expected_runtime, SLAType_t sla_type);
     MachineId_t FindBestMachine(CPUType_t cpu_type, unsigned memory_needed, bool gpu_capable, bool allow_wake);
@@ -79,4 +75,4 @@ private:
     void ProcessPendingTasks(Time_t now);
 };
 
-#endif /* Scheduler_hpp */
+#endif

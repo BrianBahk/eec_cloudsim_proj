@@ -9,9 +9,8 @@
 #include <algorithm>
 #include <climits>
 
-// Simple constants - optimized for reliability
 #define IDLE_THRESHOLD 50
-#define PERIODIC_CHECK_INTERVAL 2000000 // 2 seconds
+#define PERIODIC_CHECK_INTERVAL 2000000
 
 void Scheduler::Init() {
     SimOutput("Scheduler::Init(): pMapper initialization", 1);
@@ -19,11 +18,8 @@ void Scheduler::Init() {
     total_machines = Machine_GetTotal();
     last_periodic_check = 0;
     
-    // Discover all machines
     DiscoverMachines();
     
-    // Strategy: Keep ALL machines active and pre-create many VMs
-    // Use total pending work time for intelligent load balancing
     for (int cpu = ARM; cpu <= X86; cpu++) {
         CPUType_t cpu_type = (CPUType_t)cpu;
         for (MachineId_t mid : machines_by_type[cpu]) {
@@ -33,16 +29,13 @@ void Scheduler::Init() {
             }
             machines[mid].state = S0;
             
-            // Pre-create VMs based on CPU type
-            // LINUX/LINUX_RT work on all CPUs, WIN on X86, AIX on POWER
             vector<VMType_t> vm_types;
             vm_types.push_back(LINUX);
             vm_types.push_back(LINUX_RT);
             if (cpu_type == X86) vm_types.push_back(WIN);
             if (cpu_type == POWER) vm_types.push_back(AIX);
             
-            // Create optimal number of VMs - balance between parallelism and overhead
-            for (int i = 0; i < 8; i++) {  // 8 VMs per type - sweet spot found through testing
+            for (int i = 0; i < 8; i++) {
                 for (VMType_t vm_type : vm_types) {
                     if (machines[mid].memory_used + VM_MEMORY_OVERHEAD >= machines[mid].memory_total) break;
                     
@@ -105,8 +98,6 @@ Priority_t Scheduler::DeterminePriority(TaskId_t task_id) {
 VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type, 
                                  unsigned memory_needed, bool gpu_capable,
                                  Time_t expected_runtime, SLAType_t sla_type) {
-    // Try to reuse existing VM on active machine with space
-    // Prioritize SLA0 tasks by giving them VMs with least work
     VMId_t best_vm = static_cast<VMId_t>(-1);
     double best_score = 1e18;
     
@@ -119,20 +110,14 @@ VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type,
             if (machine.memory_total - machine.memory_used < memory_needed) continue;
             if (gpu_capable && !machine.has_gpu) continue;
             
-            // Score based on accumulated work time
             double score = vm.total_task_time;
             
-            // Prioritize SLA0 (critical) tasks for least loaded VMs
-            // Higher SLA gets higher penalty, steering them to busier VMs
             if (sla_type == SLA0) {
-                // SLA0 gets cleanest VMs - no penalty
                 score = score;
             } else if (sla_type == SLA1) {
-                // SLA1 tasks get penalty, making busy VMs more attractive
-                score = score - 2000000.0; // 2 second penalty makes busier VMs preferred
+                score = score - 2000000.0;
             } else {
-                // SLA2 tasks get bigger penalty, strongly preferring busy VMs
-                score = score - 4000000.0; // 4 second penalty
+                score = score - 4000000.0;
             }
             
             if (score < best_score) {
@@ -146,7 +131,6 @@ VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type,
         return best_vm;
     }
     
-    // Find active machine with space
     MachineId_t best_machine = static_cast<MachineId_t>(-1);
     double best_util = -1;
     
@@ -164,7 +148,6 @@ VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type,
         }
     }
     
-    // If no active machine, wake one
     if (best_machine == static_cast<MachineId_t>(-1)) {
         for (MachineId_t mid : machines_by_type[cpu_type]) {
             MachineTracker& m = machines[mid];
@@ -185,12 +168,10 @@ VMId_t Scheduler::FindOrCreateVM(CPUType_t cpu_type, VMType_t vm_type,
         return static_cast<VMId_t>(-1);
     }
     
-    // If waking, queue task
     if (waking_machines.count(best_machine) > 0) {
         return static_cast<VMId_t>(-1);
     }
     
-    // Create VM
     VMId_t vm_id = VM_Create(vm_type, cpu_type);
     VM_Attach(vm_id, best_machine);
     
@@ -270,11 +251,10 @@ void Scheduler::TaskComplete(Time_t now, TaskId_t task_id) {
 void Scheduler::ProcessPendingTasks(Time_t now) {
     if (pending_tasks.empty()) return;
     
-    // Sort pending tasks by SLA priority: SLA0 first, then SLA1, then SLA2
     sort(pending_tasks.begin(), pending_tasks.end(), [this](TaskId_t a, TaskId_t b) {
         SLAType_t sla_a = GetTaskInfo(a).required_sla;
         SLAType_t sla_b = GetTaskInfo(b).required_sla;
-        return sla_a < sla_b; // SLA0=0, SLA1=1, SLA2=2, so lower is higher priority
+        return sla_a < sla_b;
     });
     
     vector<TaskId_t> still_pending;
@@ -316,7 +296,6 @@ void Scheduler::PeriodicCheck(Time_t now) {
     
     last_periodic_check = now;
     
-    // If many pending tasks, wake more machines
     if (pending_tasks.size() > 10) {
         for (int cpu = ARM; cpu <= X86; cpu++) {
             unsigned to_wake = pending_tasks.size() / 20;
@@ -335,15 +314,12 @@ void Scheduler::PeriodicCheck(Time_t now) {
         }
     }
     
-    // Process pending first
     ProcessPendingTasks(now);
     
-    // Power down idle machines
     PowerDownIdleMachines(now);
 }
 
 void Scheduler::PowerDownIdleMachines(Time_t now) {
-    // Don't power down if we have pending tasks
     if (!pending_tasks.empty()) return;
     
     for (auto& pair : machines) {
@@ -356,14 +332,12 @@ void Scheduler::PowerDownIdleMachines(Time_t now) {
         if (m.active_tasks == 0 && m.active_vms == 0) {
             m.idle_ticks++;
             
-            // Count active machines of this type
             unsigned active_count = 0;
             unsigned total_count = machines_by_type[m.cpu_type].size();
             for (MachineId_t id : machines_by_type[m.cpu_type]) {
                 if (machines[id].state == S0) active_count++;
             }
             
-            // Keep at least half of machines active for better responsiveness
             unsigned min_active = (total_count + 1) / 2;
             if (min_active < 3) min_active = 3;
             
@@ -411,10 +385,7 @@ void Scheduler::Shutdown(Time_t time) {
 }
 
 void Scheduler::LogState(const string& context, Time_t now) {
-    // Minimal logging
 }
-
-// Public interface
 
 static Scheduler TheScheduler;
 
@@ -456,7 +427,6 @@ void SimulationComplete(Time_t time) {
 }
 
 void SLAWarning(Time_t time, TaskId_t task_id) {
-    // Boost priority
     SetTaskPriority(task_id, HIGH_PRIORITY);
 }
 
